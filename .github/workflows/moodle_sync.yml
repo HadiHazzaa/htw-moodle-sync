@@ -25,6 +25,10 @@ jobs:
           pip install playwright
           playwright install chromium --with-deps
 
+      - name: Rclone im Cloud-Runner installieren
+        run: |
+          sudo apt-get update && sudo apt-get install -y rclone
+
       - name: Moodle Skript ausführen
         env:
           HTW_USER: ${{ secrets.HTW_USER }}
@@ -45,9 +49,8 @@ jobs:
           fi
 
       - name: PDFs direkt ins OneDrive hochladen
-        uses: rclone/rclone-action@v1
-        with:
-          args: copy moodle_downloads/ myonedrive:Moodle_PDFs --update-older
         env:
           RCLONE_CONFIG_MYONEDRIVE_TYPE: onedrive
           RCLONE_CONFIG_MYONEDRIVE_TOKEN: ${{ secrets.RCLONE_ONEDRIVE_TOKEN }}
+        run: |
+          rclone copy moodle_downloads/ myonedrive:Moodle_PDFs --update-older
