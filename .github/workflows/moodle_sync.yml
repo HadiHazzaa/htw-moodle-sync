@@ -2,9 +2,8 @@ name: Moodle Auto-Sync 24/7
 
 on:
   schedule:
-    # Startet stündlich (Minute 0) via Cron-Syntax
     - cron: '0 * * * *'
-  workflow_dispatch: # Erlaubt manuelle Ausführung über die GitHub-Oberfläche
+  workflow_dispatch:
 
 jobs:
   moodle-sync:
@@ -50,13 +49,8 @@ jobs:
 
       - name: PDFs direkt ins OneDrive hochladen
         env:
-          ONEDRIVE_TOKEN: ${{ secrets.RCLONE_ONEDRIVE_TOKEN }}
+          RCLONE_CONF_DATA: ${{ secrets.RCLONE_CONF }}
         run: |
           mkdir -p ~/.config/rclone
-          cat <<EOF > ~/.config/rclone/rclone.conf
-          [myonedrive]
-          type = onedrive
-          drive_type = personal
-          token = $ONEDRIVE_TOKEN
-          EOF
+          echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
           rclone copy moodle_downloads/ myonedrive:Moodle_PDFs --update
