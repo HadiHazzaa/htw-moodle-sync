@@ -65,7 +65,7 @@ def get_safe_path(base_dir, *path_segments):
 
 def send_push_notification(grouped_downloads):
     """
-    ADHS-freundlich visualisierte Push-Nachricht mit klarer Struktur:
+    freundlich visualisierte Push-Nachricht mit klarer Struktur:
     🏛️ KURS -> 📂 Echter Moodle-Ordner -> 🔵 Datei
     """
     if not grouped_downloads or not NTFY_TOPIC:
@@ -82,11 +82,11 @@ def send_push_notification(grouped_downloads):
     message_lines = []
 
     for course_title, sections in grouped_downloads.items():
-        message_lines.append(f"🏛️ KURS: {course_title}")
+        message_lines.append(f"🏛️ {course_title}")
         message_lines.append("─" * 30) # Visuelle Trennlinie
         
         for sec_title, files in sections.items():
-            message_lines.append(f"📂 Ordner: {sec_title}")
+            message_lines.append(f"📂 {sec_title}")
             for filename in files:
                 message_lines.append(f"  🔵 {filename}")
             message_lines.append("") # Abstand zwischen Ordnern
