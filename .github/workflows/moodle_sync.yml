@@ -1,0 +1,41 @@
+name: Moodle Auto-Sync 24/7
+
+on:
+  schedule:
+    # Startet stündlich (Minute 0) via Cron-Syntax
+    - cron: '0 * * * *'
+  workflow_dispatch: # Erlaubt manuelle Ausführung über die GitHub-Oberfläche
+
+jobs:
+  moodle-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Abhängigkeiten & Headless Chromium installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Moodle Skript ausführen
+        env:
+          HTW_USER: ${{ secrets.HTW_USER }}
+          HTW_PASS: ${{ secrets.HTW_PASS }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          python moodle_htwsaar_downloader.py
+
+      - name: Download-Verlauf (download_history.json) sichern
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add download_history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update download_history.json" && git push)
