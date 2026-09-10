@@ -53,17 +53,11 @@ def clean_name(name):
     if not name:
         return "Allgemein"
     
-    # 1. Mojibake reparieren
     name = fix_utf8_mojibake(name)
-    
-    # 2. URL-Unquote (%C3%9C -> Ü)
     decoded = urllib.parse.unquote(name)
     decoded = fix_utf8_mojibake(decoded)
     
-    # 3. Mehrfache Leerzeichen säubern
     decoded = " ".join(decoded.split())
-    
-    # 4. Ungültige Dateisystem-Zeichen ersetzen
     cleaned = re.sub(r'[\\/*?:"<>|]', "_", decoded)
     return cleaned.strip() or "Allgemein"
 
@@ -203,7 +197,7 @@ def download_moodle_files():
                 safe_course_title = clean_name(raw_title)
                 print(f"\n[{index}/{len(course_urls)}] Synchronisiere Kurs: {safe_course_title}")
 
-                # Präzises DOM-Klettern via Browser-JS: Ermittelt exakte Moodle-Abschnittsnamen für jeden Link
+                # Präzise Analyse: Wandert Elternknoten ab ODER nutzt Positionsabgleich im HTML-Baum
                 material_items = main_page.evaluate("""() => {
                     const items = [];
                     const seenUrls = new Set();
@@ -215,11 +209,43 @@ def download_moodle_files():
                         seenUrls.add(href);
 
                         let secTitle = "Allgemein";
-                        const sectionContainer = link.closest('.section, [id^="section-"], .course-section, li.section, .topics > li, .weeks > li');
-                        if (sectionContainer) {
-                            const header = sectionContainer.querySelector('.sectionname, .section-title, .section-header, h2, h3, h4, [data-for="section_title"]');
-                            if (header && header.innerText.trim()) {
-                                secTitle = header.innerText.trim();
+
+                        // 1. Hierarchie-Check: Elternknoten nach Moodle-Abschnitt absuchen
+                        let curr = link.parentElement;
+                        while (curr && curr !== document.body) {
+                            if (curr.classList.contains('section') || 
+                                curr.classList.contains('course-section') || 
+                                (curr.id && curr.id.includes('section-')) || 
+                                curr.tagName === 'SECTION') {
+                                
+                                const header = curr.querySelector('.sectionname, .section-title, .section-header, [data-for="section_title"], h2, h3, h4');
+                                if (header) {
+                                    let t = header.innerText || header.textContent || "";
+                                    t = t.replace(/\\s+/g, ' ').strip ? t.replace(/\\s+/g, ' ').strip() : t.replace(/\\s+/g, ' ').trim();
+                                    if (t) {
+                                        secTitle = t;
+                                        break;
+                                    }
+                                }
+                            }
+                            curr = curr.parentElement;
+                        }
+
+                        // 2. Fallback: Positioneller Dokumentenabgleich (Nächstes vorheriges Headline-Element)
+                        if (secTitle === "Allgemein") {
+                            const allHeaders = Array.from(document.querySelectorAll('.sectionname, .section-title, .section-header, [data-for="section_title"], h3[id*="section"], .course-section h2, .course-section h3'));
+                            let bestHeader = null;
+                            for (const h of allHeaders) {
+                                if (h.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                                    bestHeader = h;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (bestHeader) {
+                                let t = bestHeader.innerText || bestHeader.textContent || "";
+                                t = t.replace(/\\s+/g, ' ').trim();
+                                if (t) secTitle = t;
                             }
                         }
 
@@ -246,7 +272,7 @@ def download_moodle_files():
                         print(f"  [⚡ Übersprungen] {safe_sec_title} -> {existing_file}")
                         continue
 
-                    # Robustes Herunterladen per HTTP-Request
+                    # Herunterladen per HTTP-Request
                     try:
                         resp = context.request.get(res_url)
                         content_type = resp.headers.get("content-type", "").lower()
@@ -262,7 +288,6 @@ def download_moodle_files():
                                 continue
 
                         if resp.ok:
-                            # Dateinamen aus Content-Disposition Header auslesen
                             content_disp = resp.headers.get("content-disposition", "")
                             filename = None
                             
