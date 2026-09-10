@@ -50,8 +50,13 @@ jobs:
 
       - name: PDFs direkt ins OneDrive hochladen
         env:
-          RCLONE_CONFIG_MYONEDRIVE_TYPE: onedrive
-          RCLONE_CONFIG_MYONEDRIVE_DRIVE_TYPE: personal
-          RCLONE_CONFIG_MYONEDRIVE_TOKEN: ${{ secrets.RCLONE_ONEDRIVE_TOKEN }}
+          ONEDRIVE_TOKEN: ${{ secrets.RCLONE_ONEDRIVE_TOKEN }}
         run: |
+          mkdir -p ~/.config/rclone
+          cat <<EOF > ~/.config/rclone/rclone.conf
+          [myonedrive]
+          type = onedrive
+          drive_type = personal
+          token = $ONEDRIVE_TOKEN
+          EOF
           rclone copy moodle_downloads/ myonedrive:Moodle_PDFs --update
