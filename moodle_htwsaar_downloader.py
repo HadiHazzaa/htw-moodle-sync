@@ -86,11 +86,11 @@ def send_push_notification(grouped_downloads):
     message_lines = []
 
     for course_title, sections in grouped_downloads.items():
-        message_lines.append(f"🏛️ KURS: {course_title}")
+        message_lines.append(f"🏛️ {course_title}")
         message_lines.append("─" * 30)
         
         for sec_title, files in sections.items():
-            message_lines.append(f"📂 Ordner: {sec_title}")
+            message_lines.append(f"📂 {sec_title}")
             for filename in files:
                 message_lines.append(f"  🔵 {filename}")
             message_lines.append("")
