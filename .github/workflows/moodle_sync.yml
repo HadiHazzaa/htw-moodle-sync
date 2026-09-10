@@ -37,5 +37,9 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add download_history.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update download_history.json" && git push)
+          if [ -f download_history.json ]; then
+            git add download_history.json
+            git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update download_history.json" && git push)
+          else
+            echo "Keine neuen Downloads – download_history.json muss nicht aktualisiert werden."
+          fi
