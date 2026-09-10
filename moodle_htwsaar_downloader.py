@@ -215,7 +215,6 @@ def download_moodle_files():
                         seenUrls.add(href);
 
                         let secTitle = "Allgemein";
-                        // Klettere im DOM hoch zur übergeordneten Moodle-Section
                         const sectionContainer = link.closest('.section, [id^="section-"], .course-section, li.section, .topics > li, .weeks > li');
                         if (sectionContainer) {
                             const header = sectionContainer.querySelector('.sectionname, .section-title, .section-header, h2, h3, h4, [data-for="section_title"]');
@@ -267,7 +266,7 @@ def download_moodle_files():
                             content_disp = resp.headers.get("content-disposition", "")
                             filename = None
                             
-                            match_utf8 = re.search(r"filename\*=(?:UTF-8''|utf-8'')([^";]+)", content_disp, re.IGNORECASE)
+                            match_utf8 = re.search(r"""filename\*=(?:UTF-8''|utf-8'')([^";]+)""", content_disp, re.IGNORECASE)
                             if match_utf8:
                                 filename = urllib.parse.unquote(match_utf8.group(1))
                             else:
