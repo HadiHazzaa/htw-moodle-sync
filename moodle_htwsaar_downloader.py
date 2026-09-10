@@ -13,7 +13,6 @@ from playwright.sync_api import sync_playwright
 USERNAME = os.environ.get("HTW_USER")
 PASSWORD = os.environ.get("HTW_PASS")
 
-# Flexible NTFY_TOPIC Steuerung
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "htw_moodle_4a8b2c1d-9e8f-7a6b-5c4d-3e2f1a0b9c8d")
 
 DOWNLOAD_DIR = "./moodle_downloads"
@@ -60,10 +59,7 @@ def get_safe_path(base_dir, *path_segments):
     return target_path
 
 def send_push_notification(grouped_downloads):
-    """
-    ADHS-freundlich visualisierte Push-Nachricht mit klarer Struktur:
-    🏛️ KURS -> 📂 Echter Moodle-Ordner -> 🔵 Datei
-    """
+    """Push-Nachricht an ntfy.sh senden"""
     if not grouped_downloads or not NTFY_TOPIC:
         return
 
@@ -164,7 +160,7 @@ def download_moodle_files():
         for index, course_url in enumerate(course_urls, 1):
             try:
                 main_page.goto(course_url, wait_until="domcontentloaded")
-                main_page.wait_for_timeout(3000)
+                main_page.wait_for_timeout(2000)
 
                 # Aufklappen aller Moodle-Abschnitte erzwingen
                 try:
@@ -188,7 +184,6 @@ def download_moodle_files():
                 safe_course_title = clean_name(raw_title)
                 print(f"\n[{index}/{len(course_urls)}] Synchronisiere Kurs: {safe_course_title}")
 
-                # Umfassende Ganzseiten-Suche nach allen Materialtypen
                 all_links = main_page.locator("a[href*='/mod/resource/view.php'], a[href*='/mod/folder/view.php'], a[href*='pluginfile.php']").all()
                 print(f"   🔍 Im Kurs gefundene Material-Links: {len(all_links)}")
 
@@ -205,7 +200,7 @@ def download_moodle_files():
                     
                     processed_urls.add(res_url)
 
-                    # Klettere im DOM nach oben, um den exakten Moodle-Abschnittsnamen zu finden
+                    # Moodle-Abschnittsnamen ermitteln
                     sec_title = "Allgemein"
                     try:
                         parent_sec = link_el.locator("xpath=ancestor::*[contains(@class, 'section') or contains(@id, 'section-') or contains(@class, 'course-section')]").first
@@ -220,72 +215,62 @@ def download_moodle_files():
 
                     safe_sec_title = clean_name(sec_title)
 
-                    # Blitz-Check: Bereits heruntergeladen?
+                    # Check: Bereits heruntergeladen?
                     if res_url in download_history and os.path.exists(download_history[res_url]):
                         existing_file = os.path.basename(download_history[res_url])
                         print(f"  [⚡ Übersprungen] {safe_sec_title} -> {existing_file}")
                         continue
 
-                    res_page = context.new_page()
+                    # Robustes Herunterladen per HTTP-Request (verhindert Tab-Abstürze)
                     try:
-                        # 1. Versuch: Direkter Browser-Download
-                        try:
-                            with res_page.expect_download(timeout=3000) as download_info:
-                                res_page.goto(res_url, wait_until="commit")
-                            download = download_info.value
-                            file_name = clean_name(download.suggested_filename)
-                            
+                        resp = context.request.get(res_url)
+                        content_type = resp.headers.get("content-type", "").lower()
+
+                        # Falls Moodle eine HTML-Einbettungsseite sendet, nach der echten Datei suchen
+                        if "text/html" in content_type and "pluginfile.php" not in resp.url:
+                            html_text = resp.text()
+                            plugin_match = re.search(r'(https?://moodle\.htwsaar\.de/pluginfile\.php/[^\s"\'<>]+)', html_text)
+                            if plugin_match:
+                                target_url = plugin_match.group(1)
+                                resp = context.request.get(target_url)
+                            else:
+                                print(f"  [ℹ️ Hinweis] Kein direkter Download-Link in HTML: {safe_sec_title}")
+                                continue
+
+                        if resp.ok:
+                            # Dateinamen aus HTTP-Header oder URL extrahieren
+                            content_disp = resp.headers.get("content-disposition", "")
+                            filename = None
+                            if "filename" in content_disp:
+                                match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', content_disp, re.IGNORECASE)
+                                if match:
+                                    filename = urllib.parse.unquote(match.group(1))
+
+                            if not filename:
+                                clean_url = re.sub(r'\?.*$', '', resp.url)
+                                filename = os.path.basename(clean_url)
+
+                            if not filename or filename == "view.php" or "." not in filename:
+                                filename = "dokument.pdf"
+
+                            file_name = clean_name(filename)
                             save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
                             sec_dir = os.path.dirname(save_path)
-                            
+
                             os.makedirs(sec_dir, exist_ok=True)
-                            download.save_as(save_path)
-                            print(f"  [+] NEU: {safe_sec_title} -> {file_name}")
-                            
+                            with open(save_path, "wb") as f:
+                                f.write(resp.body())
+
+                            print(f"  [+] NEU heruntergeladen: {safe_sec_title} -> {file_name}")
+
                             download_history[res_url] = save_path
                             newly_downloaded[safe_course_title][safe_sec_title].append(file_name)
                             save_history()
-                            res_page.close()
-                            continue
-                        except Exception:
-                            pass
+                        else:
+                            print(f"  [❌ HTTP {resp.status}] {res_url}")
 
-                        # 2. Versuch: Eingebettetes PDF (Pluginfile)
-                        pdf_src = None
-                        for selector in ["object[data*='pluginfile.php']", "embed[src*='pluginfile.php']", "iframe[src*='pluginfile.php']", "a[href*='pluginfile.php']"]:
-                            elem = res_page.locator(selector).first
-                            if elem.count() > 0:
-                                pdf_src = elem.get_attribute("data") or elem.get_attribute("src") or elem.get_attribute("href")
-                                if pdf_src:
-                                    break
-
-                        target_url = pdf_src if pdf_src else (res_page.url if "pluginfile.php" in res_page.url else None)
-
-                        if target_url:
-                            clean_url = re.sub(r'\?.*$', '', target_url)
-                            file_name = os.path.basename(clean_url)
-                            if not file_name or '.' not in file_name:
-                                file_name = "dokument.pdf"
-                            
-                            file_name = clean_name(file_name)
-                            save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
-                            sec_dir = os.path.dirname(save_path)
-
-                            response = context.request.get(target_url)
-                            if response.ok:
-                                os.makedirs(sec_dir, exist_ok=True)
-                                with open(save_path, "wb") as f:
-                                    f.write(response.body())
-                                print(f"  [+] NEU (PDF): {safe_sec_title} -> {file_name}")
-                                
-                                download_history[res_url] = save_path
-                                newly_downloaded[safe_course_title][safe_sec_title].append(file_name)
-                                save_history()
-
-                    except Exception:
-                        pass
-                    finally:
-                        res_page.close()
+                    except Exception as err:
+                        print(f"  [❌ Fehler] {res_url}: {err}")
 
             except Exception as e:
                 print(f"Fehler bei Kurs {course_url}: {e}")
