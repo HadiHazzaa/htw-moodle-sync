@@ -43,3 +43,11 @@ jobs:
           else
             echo "Keine neuen Downloads – download_history.json muss nicht aktualisiert werden."
           fi
+
+      - name: PDFs direkt ins OneDrive hochladen
+        uses: rclone/rclone-action@v1
+        with:
+          args: copy moodle_downloads/ myonedrive:Moodle_PDFs --update-older
+        env:
+          RCLONE_CONFIG_MYONEDRIVE_TYPE: onedrive
+          RCLONE_CONFIG_MYONEDRIVE_TOKEN: ${{ secrets.RCLONE_ONEDRIVE_TOKEN }}
