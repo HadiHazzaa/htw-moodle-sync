@@ -10,25 +10,22 @@ from playwright.sync_api import sync_playwright
 # ==========================================
 # ZUGANGSDATEN & EINSTELLUNGEN
 # ==========================================
-# Secrets aus den Prozess-Umgebungsvariablen laden (lokal oder GitHub Actions)
 USERNAME = os.environ.get("HTW_USER")
 PASSWORD = os.environ.get("HTW_PASS")
 
-# Flexible NTFY_TOPIC Steuerung (bevorzugt aus Umgebungsvariablen)
+# Flexible NTFY_TOPIC Steuerung
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "htw_moodle_4a8b2c1d-9e8f-7a6b-5c4d-3e2f1a0b9c8d")
 
 DOWNLOAD_DIR = "./moodle_downloads"
 CACHE_FILE = "./download_history.json"
 # ==========================================
 
-# Fail-Fast: Abbruch, wenn Umgebungsvariablen im System fehlen
 if not USERNAME or not PASSWORD:
     print("[SECURITY ERROR] HTW_USER oder HTW_PASS fehlt in den Umgebungsvariablen!")
     sys.exit(1)
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Download-Verlauf laden (Verhindert mehrfaches Herunterladen)
 if os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -57,7 +54,6 @@ def get_safe_path(base_dir, *path_segments):
     abs_base = os.path.abspath(base_dir)
     target_path = os.path.abspath(os.path.join(abs_base, *path_segments))
     
-    # Prüfe Invariante: Liegt der Zielpfad im Download-Ordner?
     if os.path.commonpath([abs_base, target_path]) != abs_base:
         raise PermissionError(f"[SECURITY ALERT] Path Traversal abgefangen: {target_path}")
         
@@ -65,13 +61,12 @@ def get_safe_path(base_dir, *path_segments):
 
 def send_push_notification(grouped_downloads):
     """
-    freundlich visualisierte Push-Nachricht mit klarer Struktur:
+    ADHS-freundlich visualisierte Push-Nachricht mit klarer Struktur:
     🏛️ KURS -> 📂 Echter Moodle-Ordner -> 🔵 Datei
     """
     if not grouped_downloads or not NTFY_TOPIC:
         return
 
-    # Gesamtzahl aller neu heruntergeladenen Dateien berechnen
     total_files = sum(
         len(files) 
         for sections in grouped_downloads.values() 
@@ -82,16 +77,16 @@ def send_push_notification(grouped_downloads):
     message_lines = []
 
     for course_title, sections in grouped_downloads.items():
-        message_lines.append(f"🏛️ {course_title}")
-        message_lines.append("─" * 30) # Visuelle Trennlinie
+        message_lines.append(f"🏛️ KURS: {course_title}")
+        message_lines.append("─" * 30)
         
         for sec_title, files in sections.items():
-            message_lines.append(f"📂 {sec_title}")
+            message_lines.append(f"📂 Ordner: {sec_title}")
             for filename in files:
                 message_lines.append(f"  🔵 {filename}")
-            message_lines.append("") # Abstand zwischen Ordnern
+            message_lines.append("")
             
-        message_lines.append("=" * 30) # Trenner zwischen Kursen
+        message_lines.append("=" * 30)
         message_lines.append("")
 
     body = "\n".join(message_lines).strip()
@@ -116,11 +111,9 @@ def send_push_notification(grouped_downloads):
         print(f"\n[PUSH ERROR] Fehler beim Senden der Benachrichtigung: {e}")
 
 def download_moodle_files():
-    # Verschachteltes Dictionary: Kurs -> Moodle-Abschnitt -> Liste von Dateinamen
     newly_downloaded = defaultdict(lambda: defaultdict(list))
 
     with sync_playwright() as p:
-        # Headless Mode (Hintergrundprozess ohne GUI)
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(accept_downloads=True)
         main_page = context.new_page()
@@ -141,7 +134,6 @@ def download_moodle_files():
 
             main_page.wait_for_timeout(3000)
 
-            # Automatisch Nutzungsrichtlinien / BigBlueButton "Fortsetzen" bestätigen
             for _ in range(3):
                 continue_btn = main_page.locator("button:has-text('Fortsetzen'), input[value='Fortsetzen'], a:has-text('Fortsetzen')").first
                 if continue_btn.count() > 0 and continue_btn.is_visible():
@@ -171,14 +163,13 @@ def download_moodle_files():
 
         for index, course_url in enumerate(course_urls, 1):
             try:
-                # 1. Kursseite im Headless-Modus laden
                 main_page.goto(course_url, wait_until="domcontentloaded")
-                main_page.wait_for_timeout(2000)
+                main_page.wait_for_timeout(3000)
 
-                # 2. DOM-Injection: Alle einklappbaren Moodle-Abschnitte (Akkordeons) im Hintergrund erzwingen
+                # Aufklappen aller Moodle-Abschnitte erzwingen
                 try:
                     main_page.evaluate("""() => {
-                        document.querySelectorAll('.collapse, .course-section-header').forEach(el => {
+                        document.querySelectorAll('.collapse, .course-section-header, .drawer').forEach(el => {
                             el.classList.add('show');
                             el.classList.remove('collapsed');
                         });
@@ -189,118 +180,112 @@ def download_moodle_files():
                 except Exception:
                     pass
 
-                # Klicke zusätzlich eventuelle "Alles ausklappen"-Buttons an
                 try:
-                    expand_btn = main_page.locator(".expandall, a:has-text('Alles ausklappen'), button:has-text('Alles ausklappen')").first
-                    if expand_btn.count() > 0:
-                        expand_btn.click()
-                        main_page.wait_for_timeout(800)
-                except Exception:
-                    pass
-
-                # 3. Echten Kursnamen auslesen
-                try:
-                    raw_title = main_page.locator("h1").first.inner_text()
+                    raw_title = main_page.locator("h1, .page-header-headings h1").first.inner_text()
                 except Exception:
                     raw_title = main_page.title().replace("Kurs:", "").strip()
 
                 safe_course_title = clean_name(raw_title)
                 print(f"\n[{index}/{len(course_urls)}] Synchronisiere Kurs: {safe_course_title}")
 
-                # 4. Moodle-Abschnitte durchsuchen
-                sections = main_page.locator(".course-content .section, li.section, section.course-section, div.course-section, [id^='section-']").all()
-                if not sections:
-                    sections = [main_page.locator("body")]
+                # Umfassende Ganzseiten-Suche nach allen Materialtypen
+                all_links = main_page.locator("a[href*='/mod/resource/view.php'], a[href*='/mod/folder/view.php'], a[href*='pluginfile.php']").all()
+                print(f"   🔍 Im Kurs gefundene Material-Links: {len(all_links)}")
+
+                if len(all_links) == 0:
+                    print("   ℹ️ Keine Dokumente in diesem Kurs gefunden.")
+                    continue
 
                 processed_urls = set()
 
-                for sec in sections:
+                for link_el in all_links:
+                    res_url = link_el.get_attribute("href")
+                    if not res_url or res_url in processed_urls:
+                        continue
+                    
+                    processed_urls.add(res_url)
+
+                    # Klettere im DOM nach oben, um den exakten Moodle-Abschnittsnamen zu finden
                     sec_title = "Allgemein"
                     try:
-                        header_el = sec.locator(".sectionname, .section-title, h2, h3, h4, .section-header").first
-                        if header_el.count() > 0:
-                            raw_sec = header_el.inner_text().strip()
-                            if raw_sec:
-                                sec_title = raw_sec
+                        parent_sec = link_el.locator("xpath=ancestor::*[contains(@class, 'section') or contains(@id, 'section-') or contains(@class, 'course-section')]").first
+                        if parent_sec.count() > 0:
+                            header_el = parent_sec.locator(".sectionname, .section-title, h2, h3, h4, .section-header").first
+                            if header_el.count() > 0:
+                                raw_sec = header_el.inner_text().strip()
+                                if raw_sec:
+                                    sec_title = raw_sec
                     except Exception:
                         pass
 
                     safe_sec_title = clean_name(sec_title)
-                    res_elements = sec.locator("a[href*='/mod/resource/view.php'], a[href*='pluginfile.php']").all()
 
-                    for res_el in res_elements:
-                        res_url = res_el.get_attribute("href")
-                        if not res_url or res_url in processed_urls:
-                            continue
-                        
-                        processed_urls.add(res_url)
+                    # Blitz-Check: Bereits heruntergeladen?
+                    if res_url in download_history and os.path.exists(download_history[res_url]):
+                        existing_file = os.path.basename(download_history[res_url])
+                        print(f"  [⚡ Übersprungen] {safe_sec_title} -> {existing_file}")
+                        continue
 
-                        # Blitz-Check: Bereits heruntergeladen?
-                        if res_url in download_history and os.path.exists(download_history[res_url]):
-                            existing_file = os.path.basename(download_history[res_url])
-                            print(f"  [⚡ Übersprungen] Bereits vorhanden: {safe_sec_title} -> {existing_file}")
-                            continue
-
-                        res_page = context.new_page()
+                    res_page = context.new_page()
+                    try:
+                        # 1. Versuch: Direkter Browser-Download
                         try:
-                            # 1. Versuch: Direkter Browser-Download
-                            try:
-                                with res_page.expect_download(timeout=3000) as download_info:
-                                    res_page.goto(res_url, wait_until="commit")
-                                download = download_info.value
-                                file_name = clean_name(download.suggested_filename)
-                                
-                                save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
-                                sec_dir = os.path.dirname(save_path)
-                                
+                            with res_page.expect_download(timeout=3000) as download_info:
+                                res_page.goto(res_url, wait_until="commit")
+                            download = download_info.value
+                            file_name = clean_name(download.suggested_filename)
+                            
+                            save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
+                            sec_dir = os.path.dirname(save_path)
+                            
+                            os.makedirs(sec_dir, exist_ok=True)
+                            download.save_as(save_path)
+                            print(f"  [+] NEU: {safe_sec_title} -> {file_name}")
+                            
+                            download_history[res_url] = save_path
+                            newly_downloaded[safe_course_title][safe_sec_title].append(file_name)
+                            save_history()
+                            res_page.close()
+                            continue
+                        except Exception:
+                            pass
+
+                        # 2. Versuch: Eingebettetes PDF (Pluginfile)
+                        pdf_src = None
+                        for selector in ["object[data*='pluginfile.php']", "embed[src*='pluginfile.php']", "iframe[src*='pluginfile.php']", "a[href*='pluginfile.php']"]:
+                            elem = res_page.locator(selector).first
+                            if elem.count() > 0:
+                                pdf_src = elem.get_attribute("data") or elem.get_attribute("src") or elem.get_attribute("href")
+                                if pdf_src:
+                                    break
+
+                        target_url = pdf_src if pdf_src else (res_page.url if "pluginfile.php" in res_page.url else None)
+
+                        if target_url:
+                            clean_url = re.sub(r'\?.*$', '', target_url)
+                            file_name = os.path.basename(clean_url)
+                            if not file_name or '.' not in file_name:
+                                file_name = "dokument.pdf"
+                            
+                            file_name = clean_name(file_name)
+                            save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
+                            sec_dir = os.path.dirname(save_path)
+
+                            response = context.request.get(target_url)
+                            if response.ok:
                                 os.makedirs(sec_dir, exist_ok=True)
-                                download.save_as(save_path)
-                                print(f"  [+] NEU heruntergeladen: {safe_sec_title} -> {file_name}")
+                                with open(save_path, "wb") as f:
+                                    f.write(response.body())
+                                print(f"  [+] NEU (PDF): {safe_sec_title} -> {file_name}")
                                 
                                 download_history[res_url] = save_path
                                 newly_downloaded[safe_course_title][safe_sec_title].append(file_name)
                                 save_history()
-                                res_page.close()
-                                continue
-                            except Exception:
-                                pass
 
-                            # 2. Versuch: Eingebettetes PDF (Pluginfile)
-                            pdf_src = None
-                            for selector in ["object[data*='pluginfile.php']", "embed[src*='pluginfile.php']", "iframe[src*='pluginfile.php']", "a[href*='pluginfile.php']"]:
-                                elem = res_page.locator(selector).first
-                                if elem.count() > 0:
-                                    pdf_src = elem.get_attribute("data") or elem.get_attribute("src") or elem.get_attribute("href")
-                                    if pdf_src:
-                                        break
-
-                            target_url = pdf_src if pdf_src else (res_page.url if "pluginfile.php" in res_page.url else None)
-
-                            if target_url:
-                                clean_url = re.sub(r'\?.*$', '', target_url)
-                                file_name = os.path.basename(clean_url)
-                                if not file_name or '.' not in file_name:
-                                    file_name = "dokument.pdf"
-                                
-                                file_name = clean_name(file_name)
-                                save_path = get_safe_path(DOWNLOAD_DIR, safe_course_title, safe_sec_title, file_name)
-                                sec_dir = os.path.dirname(save_path)
-
-                                response = context.request.get(target_url)
-                                if response.ok:
-                                    os.makedirs(sec_dir, exist_ok=True)
-                                    with open(save_path, "wb") as f:
-                                        f.write(response.body())
-                                    print(f"  [+] NEU heruntergeladen (PDF): {safe_sec_title} -> {file_name}")
-                                    
-                                    download_history[res_url] = save_path
-                                    newly_downloaded[safe_course_title][safe_sec_title].append(file_name)
-                                    save_history()
-
-                        except Exception:
-                            pass
-                        finally:
-                            res_page.close()
+                    except Exception:
+                        pass
+                    finally:
+                        res_page.close()
 
             except Exception as e:
                 print(f"Fehler bei Kurs {course_url}: {e}")
@@ -311,7 +296,6 @@ def download_moodle_files():
         print("="*60)
         browser.close()
 
-    # Nach Abschluss: Strukturierte Push-Benachrichtigung senden
     send_push_notification(newly_downloaded)
 
 if __name__ == "__main__":
