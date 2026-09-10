@@ -39,12 +39,31 @@ def save_history():
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(download_history, f, ensure_ascii=False, indent=2)
 
+def fix_utf8_mojibake(text):
+    """Repariert fehlerhafte UTF-8 Dekodierungen (z. B. Ãœ -> Ü, Ã¤ -> ä)"""
+    if not text:
+        return ""
+    try:
+        return text.encode('latin1').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
 def clean_name(name):
-    """Bereinigt Dateinamen und dekodiert URL-Sonderzeichen (%C3%9C -> Ü)"""
+    """Bereinigt Dateinamen, repariert Umlaute und dekodiert URL-Sonderzeichen"""
     if not name:
         return "Allgemein"
+    
+    # 1. Mojibake reparieren
+    name = fix_utf8_mojibake(name)
+    
+    # 2. URL-Unquote (%C3%9C -> Ü)
     decoded = urllib.parse.unquote(name)
+    decoded = fix_utf8_mojibake(decoded)
+    
+    # 3. Mehrfache Leerzeichen säubern
     decoded = " ".join(decoded.split())
+    
+    # 4. Ungültige Dateisystem-Zeichen ersetzen
     cleaned = re.sub(r'[\\/*?:"<>|]', "_", decoded)
     return cleaned.strip() or "Allgemein"
 
@@ -184,36 +203,43 @@ def download_moodle_files():
                 safe_course_title = clean_name(raw_title)
                 print(f"\n[{index}/{len(course_urls)}] Synchronisiere Kurs: {safe_course_title}")
 
-                all_links = main_page.locator("a[href*='/mod/resource/view.php'], a[href*='/mod/folder/view.php'], a[href*='pluginfile.php']").all()
-                print(f"   🔍 Im Kurs gefundene Material-Links: {len(all_links)}")
+                # Präzises DOM-Klettern via Browser-JS: Ermittelt exakte Moodle-Abschnittsnamen für jeden Link
+                material_items = main_page.evaluate("""() => {
+                    const items = [];
+                    const seenUrls = new Set();
+                    const links = document.querySelectorAll('a[href*="/mod/resource/view.php"], a[href*="/mod/folder/view.php"], a[href*="pluginfile.php"]');
 
-                if len(all_links) == 0:
+                    links.forEach(link => {
+                        const href = link.getAttribute('href');
+                        if (!href || seenUrls.has(href)) return;
+                        seenUrls.add(href);
+
+                        let secTitle = "Allgemein";
+                        // Klettere im DOM hoch zur übergeordneten Moodle-Section
+                        const sectionContainer = link.closest('.section, [id^="section-"], .course-section, li.section, .topics > li, .weeks > li');
+                        if (sectionContainer) {
+                            const header = sectionContainer.querySelector('.sectionname, .section-title, .section-header, h2, h3, h4, [data-for="section_title"]');
+                            if (header && header.innerText.trim()) {
+                                secTitle = header.innerText.trim();
+                            }
+                        }
+
+                        items.push({ url: href, section: secTitle });
+                    });
+
+                    return items;
+                }""")
+
+                print(f"   🔍 Im Kurs gefundene Material-Links: {len(material_items)}")
+
+                if len(material_items) == 0:
                     print("   ℹ️ Keine Dokumente in diesem Kurs gefunden.")
                     continue
 
-                processed_urls = set()
-
-                for link_el in all_links:
-                    res_url = link_el.get_attribute("href")
-                    if not res_url or res_url in processed_urls:
-                        continue
-                    
-                    processed_urls.add(res_url)
-
-                    # Moodle-Abschnittsnamen ermitteln
-                    sec_title = "Allgemein"
-                    try:
-                        parent_sec = link_el.locator("xpath=ancestor::*[contains(@class, 'section') or contains(@id, 'section-') or contains(@class, 'course-section')]").first
-                        if parent_sec.count() > 0:
-                            header_el = parent_sec.locator(".sectionname, .section-title, h2, h3, h4, .section-header").first
-                            if header_el.count() > 0:
-                                raw_sec = header_el.inner_text().strip()
-                                if raw_sec:
-                                    sec_title = raw_sec
-                    except Exception:
-                        pass
-
-                    safe_sec_title = clean_name(sec_title)
+                for item in material_items:
+                    res_url = item["url"]
+                    raw_sec_title = item["section"]
+                    safe_sec_title = clean_name(raw_sec_title)
 
                     # Check: Bereits heruntergeladen?
                     if res_url in download_history and os.path.exists(download_history[res_url]):
@@ -221,12 +247,11 @@ def download_moodle_files():
                         print(f"  [⚡ Übersprungen] {safe_sec_title} -> {existing_file}")
                         continue
 
-                    # Robustes Herunterladen per HTTP-Request (verhindert Tab-Abstürze)
+                    # Robustes Herunterladen per HTTP-Request
                     try:
                         resp = context.request.get(res_url)
                         content_type = resp.headers.get("content-type", "").lower()
 
-                        # Falls Moodle eine HTML-Einbettungsseite sendet, nach der echten Datei suchen
                         if "text/html" in content_type and "pluginfile.php" not in resp.url:
                             html_text = resp.text()
                             plugin_match = re.search(r'(https?://moodle\.htwsaar\.de/pluginfile\.php/[^\s"\'<>]+)', html_text)
@@ -238,13 +263,17 @@ def download_moodle_files():
                                 continue
 
                         if resp.ok:
-                            # Dateinamen aus HTTP-Header oder URL extrahieren
+                            # Dateinamen aus Content-Disposition Header auslesen
                             content_disp = resp.headers.get("content-disposition", "")
                             filename = None
-                            if "filename" in content_disp:
-                                match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', content_disp, re.IGNORECASE)
+                            
+                            match_utf8 = re.search(r"filename\*=(?:UTF-8''|utf-8'')([^";]+)", content_disp, re.IGNORECASE)
+                            if match_utf8:
+                                filename = urllib.parse.unquote(match_utf8.group(1))
+                            else:
+                                match = re.search(r'filename="?([^";]+)"?', content_disp, re.IGNORECASE)
                                 if match:
-                                    filename = urllib.parse.unquote(match.group(1))
+                                    filename = match.group(1)
 
                             if not filename:
                                 clean_url = re.sub(r'\?.*$', '', resp.url)
