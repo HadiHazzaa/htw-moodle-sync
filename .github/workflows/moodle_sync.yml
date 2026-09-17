@@ -54,3 +54,10 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
           rclone copy moodle_downloads/ myonedrive:Moodle_PDFs --update
+
+          - name: Commit und Push der download_history.json
+            uses: stefanzweifel/git-auto-commit-action@v5
+            with:
+               commit_message: "docs: update download history [skip ci]"
+               file_pattern: "download_history.json"
+    
