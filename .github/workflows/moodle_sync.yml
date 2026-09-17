@@ -36,17 +36,6 @@ jobs:
         run: |
           python moodle_htwsaar_downloader.py
 
-      - name: Download-Verlauf (download_history.json) sichern
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -f download_history.json ]; then
-            git add download_history.json
-            git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update download_history.json" && git push)
-          else
-            echo "Keine neuen Downloads – download_history.json muss nicht aktualisiert werden."
-          fi
-
       - name: PDFs direkt ins OneDrive hochladen
         env:
           RCLONE_CONF_DATA: ${{ secrets.RCLONE_CONF }}
@@ -55,9 +44,8 @@ jobs:
           echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
           rclone copy moodle_downloads/ myonedrive:Moodle_PDFs --update
 
-          - name: Commit und Push der download_history.json
-            uses: stefanzweifel/git-auto-commit-action@v5
-            with:
-               commit_message: "docs: update download history [skip ci]"
-               file_pattern: "download_history.json"
-    
+      - name: Commit und Push der download_history.json
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: update download history [skip ci]"
+          file_pattern: "download_history.json"
