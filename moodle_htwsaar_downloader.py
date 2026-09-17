@@ -197,7 +197,6 @@ def download_moodle_files():
                 safe_course_title = clean_name(raw_title)
                 print(f"\n[{index}/{len(course_urls)}] Synchronisiere Kurs: {safe_course_title}")
 
-                # Präzise Analyse: Wandert Elternknoten ab ODER nutzt Positionsabgleich im HTML-Baum
                 material_items = main_page.evaluate("""() => {
                     const items = [];
                     const seenUrls = new Set();
@@ -210,7 +209,6 @@ def download_moodle_files():
 
                         let secTitle = "Allgemein";
 
-                        // 1. Hierarchie-Check: Elternknoten nach Moodle-Abschnitt absuchen
                         let curr = link.parentElement;
                         while (curr && curr !== document.body) {
                             if (curr.classList.contains('section') || 
@@ -231,7 +229,6 @@ def download_moodle_files():
                             curr = curr.parentElement;
                         }
 
-                        // 2. Fallback: Positioneller Dokumentenabgleich (Nächstes vorheriges Headline-Element)
                         if (secTitle === "Allgemein") {
                             const allHeaders = Array.from(document.querySelectorAll('.sectionname, .section-title, .section-header, [data-for="section_title"], h3[id*="section"], .course-section h2, .course-section h3'));
                             let bestHeader = null;
@@ -266,8 +263,8 @@ def download_moodle_files():
                     raw_sec_title = item["section"]
                     safe_sec_title = clean_name(raw_sec_title)
 
-                    # Check: Bereits heruntergeladen?
-                    if res_url in download_history and os.path.exists(download_history[res_url]):
+                    # WICHTIGE ÄNDERUNG: Nur prüfen, ob die URL in download_history steht
+                    if res_url in download_history:
                         existing_file = os.path.basename(download_history[res_url])
                         print(f"  [⚡ Übersprungen] {safe_sec_title} -> {existing_file}")
                         continue
